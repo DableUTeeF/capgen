@@ -43,7 +43,7 @@ if __name__ == '__main__':
             gt[k].append(tokenize(ann))
 
     outputs = {'filename': [], 'bleu': [], 'rougeL': [], 'meteor': [], 'cider': [], 'sacrebleu': [],
-               # 'sentence_sacrebleu': [],
+               'sentence_sacrebleu': [],
                # 'preds': [], 'labels': [],
                'bleu2': [], 'bleu4': [],
                'utokens_pd': []
@@ -89,6 +89,8 @@ if __name__ == '__main__':
             text = tokenize(dic[key])
             utokens_pd.update(text.split(' '))
             preds.append(text)
+            results = sacrebleu.sentence_bleu(text, gt[key])
+            sentence_sacrebleu.append(results.score)
 
             bleu2.append(sentence_bleu.sentence_score(text, gt[key],).score)
 
@@ -99,7 +101,7 @@ if __name__ == '__main__':
         outputs['bleu4'].append(BLEUscore)
         outputs['utokens_pd'].append(len(utokens_pd))
         outputs['filename'].append(filename)
-        # outputs['sentence_sacrebleu'].append(np.mean(sentence_sacrebleu))
+        outputs['sentence_sacrebleu'].append(np.mean(sentence_sacrebleu))
         results = sacrebleu.corpus_bleu(preds, labels)
         outputs['sacrebleu'].append(results.score)
         print('sacrebleu_ori')
@@ -130,4 +132,4 @@ if __name__ == '__main__':
         # raise Exception()
         outputs['cider'].append(results['CIDEr'])
         df = pd.DataFrame(outputs)
-        df.to_csv('csvs/results-v0.5_6.csv')
+        df.to_csv('csvs/results-v0.5_7.csv')
