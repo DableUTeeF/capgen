@@ -35,7 +35,7 @@ if __name__ == '__main__':
     meteor = evaluate.load("meteor")
     hf_sacrebleu = evaluate.load("sacrebleu")
     gt = {}
-    json_file = json.load(open('/mnt/d/work/capgen/capgen_v0.5/test.json'))
+    json_file = json.load(open('/media/palm/Data/capgen/capgen_v0.5/annotations/test.json'))
     for key in json_file:
         k = os.path.basename(key)+'.jpg'
         gt[k] = []
@@ -48,19 +48,14 @@ if __name__ == '__main__':
                'bleu2': [], 'bleu4': [],
                'utokens_pd': []
                }
-    ss = 'results-v0.5'
+    ss = '/tmp'
     for filename in os.listdir(ss):
         if 'eng' in filename or 'ling' in filename:
             continue
-        # if filename not in [
-        #     'phayathaibertnocross_2_1e-05_thai.json',
-        #     'blip-large.json',
-        #     'gpt2_swin_2_1e-05_thai.json',
-        #     'phayathaibert_swin_2_2e-05_thai_encoder_freeze.json',
-        #     'gpt2_scratch_1e-05_2.json',
-        #     'mgpt_scratch_1e-05_2.json'
-        # ]:
-        #     continue
+        if filename not in [
+            'gpt2_smallvit_2_1e-05_thai_encoder_freeze.json'
+        ]:
+            continue
         dic = json.load(open(os.path.join(ss, filename)))
         print('\n' + filename)
         labels = []
