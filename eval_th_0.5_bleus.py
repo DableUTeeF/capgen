@@ -53,7 +53,8 @@ if __name__ == '__main__':
         if 'eng' in filename or 'ling' in filename:
             continue
         if filename not in [
-            'gpt2_smallvit_2_1e-05_thai_encoder_freeze.json'
+            '4e-4.json',
+            '1e-5.json'
         ]:
             continue
         dic = json.load(open(os.path.join(ss, filename)))
