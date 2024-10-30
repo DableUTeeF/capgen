@@ -1,10 +1,11 @@
-from transformers import Blip2ForConditionalGeneration, AutoTokenizer, AutoModel, AutoImageProcessor, AutoModelForCausalLM, Blip2Config
+from transformers import Blip2ForConditionalGeneration, AutoTokenizer, AutoModel, AutoImageProcessor, AutoModelForCausalLM, Blip2Config, VisionEncoderDecoderModel
 from torch import nn
 import torch
 from PIL import Image
 from calflops import calculate_flops, calculate_flops_hf
 from transformers.modeling_outputs import BaseModelOutput
 import pandas as pd
+from calflops.calculate_pipline import CalFlopsPipline
 
 
 class Encoder(nn.Module):
@@ -31,19 +32,113 @@ class Encoder(nn.Module):
         pass
 
 
+def cat_cost(model):
+    calculate_flops_pipline = CalFlopsPipline(model=model,
+                                              include_backPropagation=False,
+                                              compute_bp_factor=2.0)
+    calculate_flops_pipline.start_flops_calculate(ignore_list=None)
+
+    model_inputs = image_processor(image, return_tensors='pt').to('cuda')
+    encoder_hidden_states = model.encoder(
+        model_inputs['pixel_values'],
+    )[0]
+    if len(encoder_hidden_states.size()) == 4:
+        encoder_hidden_states = encoder_hidden_states.permute(0, 2, 3, 1)
+        encoder_hidden_states = encoder_hidden_states.reshape(encoder_hidden_states.size(0), -1, encoder_hidden_states.size(3))
+    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states)
+    generated_tokens = torch.tensor([[
+        tokenizer.bos_token_id
+    ]]).cuda()
+    generated_tokens.size()
+    if 'GPT' in model.decoder.config.architectures[0]:
+        hidden_states = encoder_hidden_states
+        decoder_outputs = model.decoder(
+            inputs_embeds=hidden_states,  # n, 50, 768
+            output_attentions=None,
+            output_hidden_states=None,
+            use_cache=None,
+            past_key_values=None,
+            return_dict=None,
+        )
+        logits = decoder_outputs.logits
+        token = logits[:, -1:].argmax(-1)
+        generated_tokens = token
+    for i in range(119):
+        if 'GPT' in model.decoder.config.architectures[0]:
+            embed_tokens = model.decoder.transformer.wte(generated_tokens)
+        elif 'Camembert' in model.decoder.config.architectures[0]:
+            embed_tokens = model.decoder.roberta.embeddings(generated_tokens)
+        elif 'Roberta' in model.decoder.config.architectures[0]:
+            embed_tokens = model.decoder.roberta.embeddings(generated_tokens)
+        elif 'OPT' in model.decoder.config.architectures[0]:
+            embed_tokens = model.decoder.model.decoder.embed_tokens(generated_tokens)
+
+        hidden_states = torch.cat((encoder_hidden_states, embed_tokens), dim=1)
+        decoder_outputs = model.decoder(
+            inputs_embeds=hidden_states,  # n, 50, 768
+            output_attentions=None,
+            output_hidden_states=None,
+            use_cache=None,
+            past_key_values=None,
+            return_dict=None,
+        )
+        logits = decoder_outputs.logits
+        token = logits[:, -1:].argmax(-1)
+        generated_tokens = torch.cat((generated_tokens, token), dim=1)
+    flops = calculate_flops_pipline.get_total_flops()
+    macs = calculate_flops_pipline.get_total_macs()
+    params = calculate_flops_pipline.get_total_params()
+    calculate_flops_pipline.end_flops_calculate()
+    return flops / 1e9, macs / 1e9, params
+
+
+def cross_cost(model):
+    calculate_flops_pipline = CalFlopsPipline(model=model,
+                                              include_backPropagation=False,
+                                              compute_bp_factor=2.0)
+    calculate_flops_pipline.start_flops_calculate(ignore_list=None)
+
+    model_inputs = image_processor(image, return_tensors='pt').to('cuda')
+    encoder_hidden_states = model.encoder(
+        model_inputs['pixel_values'],
+    )[0]
+    if len(encoder_hidden_states.size()) == 4:
+        encoder_hidden_states = encoder_hidden_states.permute(0, 2, 3, 1)
+        encoder_hidden_states = encoder_hidden_states.reshape(encoder_hidden_states.size(0), -1, encoder_hidden_states.size(3))
+    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states)
+    generated_tokens = torch.tensor([[
+        tokenizer.bos_token_id
+    ]]).cuda()
+    generated_tokens.size()
+    for i in range(120):
+
+        decoder_outputs = model.decoder(
+            input_ids=generated_tokens,
+            encoder_hidden_states=encoder_hidden_states,
+        )
+        logits = decoder_outputs.logits
+        token = logits[:, -1:].argmax(-1)
+        generated_tokens = torch.cat((generated_tokens, token), dim=1)
+    flops = calculate_flops_pipline.get_total_flops()
+    macs = calculate_flops_pipline.get_total_macs()
+    params = calculate_flops_pipline.get_total_params()
+    calculate_flops_pipline.end_flops_calculate()
+    return flops / 1e9, macs / 1e9, params
+
+
 if __name__ == '__main__':
-    final = {'image': [], 'text': [], 'flops': [], 'macs': [], 'params': []}
+    final = {'type': [], 'image': [], 'text': [], 'flops': [], 'macs': [], 'params': []}
     encoders = [
         'vit',
-        'swin',
-        'cnvnext',
+        # 'swin',
+        # 'cnvnext',
         'clip',
         # 'blip2',
     ]
     decoders = [
         'gpt2',
         'wangchan',
-        'phayathai',
+        # 'phayathai',
         # 'opt2'
     ]
     image = Image.open('/home/palm/Pictures/52104916_255240975405106_8237557676691685376_n.jpg')
@@ -76,21 +171,21 @@ if __name__ == '__main__':
                 decoder = AutoModelForCausalLM.from_pretrained(
                     'gpt2',
                     is_decoder=True,
-                    add_cross_attention=False
+                    add_cross_attention=True
                 )
                 tokenizer = AutoTokenizer.from_pretrained('gpt2')
             elif text_decode_model == 'wangchan':
                 decoder = AutoModelForCausalLM.from_pretrained(
                     'airesearch/wangchanberta-base-att-spm-uncased',
                     is_decoder=True,
-                    add_cross_attention=False
+                    add_cross_attention=True
                 )
                 tokenizer = AutoTokenizer.from_pretrained('airesearch/wangchanberta-base-att-spm-uncased')
             elif text_decode_model == 'phayathai':
                 decoder = AutoModelForCausalLM.from_pretrained(
                     'clicknext/phayathaibert',
                     is_decoder=True,
-                    add_cross_attention=False
+                    add_cross_attention=True
                 )
                 tokenizer = AutoTokenizer.from_pretrained('clicknext/phayathaibert')
             elif text_decode_model == 'opt2':
@@ -99,29 +194,29 @@ if __name__ == '__main__':
                 )
                 decoder = blip_ori.language_model
                 tokenizer = AutoTokenizer.from_pretrained('Salesforce/blip2-opt-2.7b-coco')
-            proj = nn.Linear(encoder.config.hidden_size, decoder.config.hidden_size)
-
-            inputs = image_processor(image, return_tensors='pt')
-            with torch.no_grad():
-                outputs = encoder(**inputs)
-
-            ec = calculate_flops(encoder, input_shape=tuple(inputs['pixel_values'].size()), output_as_string=False, print_results=False)
-            pc = calculate_flops(proj, input_shape=tuple(outputs[0].size()), output_as_string=False, print_results=False)
-            dc = calculate_flops_hf(
-                'gpt2',
-                decoder,
-                forward_mode='generate',
-                output_as_string=False,
-                print_results=False
+            model = VisionEncoderDecoderModel(
+                None,
+                encoder,
+                decoder
             )
+            model.enc_to_dec_proj = nn.Linear(model.encoder.config.hidden_size, model.decoder.config.hidden_size)
+            model = model.cuda()
 
+            gflops, gmacs, params = cat_cost(model)
+            final['type'].append('cat')
             final['image'].append(vit_model)
             final['text'].append(text_decode_model)
-            final['flops'].append((ec[0] + pc[0] + dc[0] * 1) / 1e9)
-            final['macs'].append((ec[1] + pc[1] + dc[1] * 1) / 1e9)
-            final['params'].append((ec[2] + pc[2] + dc[2]))
+            final['flops'].append(gflops)
+            final['macs'].append(gmacs)
+            final['params'].append(params)
 
-            print('flops =', (ec[0] + pc[0] + dc[0] * 1) / 1e9)
-            print('macs =', (ec[1] + pc[1] + dc[1] * 1) / 1e9)
-            print('params =', (ec[2] + pc[2] + dc[2]))
-    pd.DataFrame(final).to_csv('csvs/cost.csv', index=False)
+            gflops, gmacs, params = cross_cost(model)
+            final['type'].append('cross')
+            final['image'].append(vit_model)
+            final['text'].append(text_decode_model)
+            final['flops'].append(gflops)
+            final['macs'].append(gmacs)
+            final['params'].append(params)
+
+    df = pd.DataFrame(final)
+    df.sort_values('type').to_csv('csvs/cost.csv', index=False)
